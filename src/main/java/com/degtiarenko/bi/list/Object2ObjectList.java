@@ -1,6 +1,8 @@
 package com.degtiarenko.bi.list;
 
 import java.util.Arrays;
+import java.util.ConcurrentModificationException;
+import java.util.NoSuchElementException;
 
 /**
  * @author Ivan Degtyarenko
@@ -13,8 +15,13 @@ public class Object2ObjectList<T1, T2> implements PairList<T1, T2> {
     private Object[] firsts;
     private Object[] seconds;
     private int size = 0;
-    // will be used by iterator to check whether list was modified or not
-    private int modCount = 0;
+
+    /**
+     * Made long instead of int to decrease probability of false non-positive failing of iterator even more.
+     *
+     * @see java.util.AbstractList#modCount
+     */
+    protected transient long modCount = 0;
 
     public Object2ObjectList(int capacity) {
         this.firsts = new Object[capacity];
@@ -34,6 +41,16 @@ public class Object2ObjectList<T1, T2> implements PairList<T1, T2> {
     @Override
     public boolean isEmpty() {
         return size == 0;
+    }
+
+    @Override
+    public boolean contains(Object first, Object second) {
+        for (int index = 0; index < size; index++) {
+            if (equalsToElementN(first, index, firsts) && (equalsToElementN(second, index, seconds))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override
@@ -96,12 +113,10 @@ public class Object2ObjectList<T1, T2> implements PairList<T1, T2> {
         seconds[size] = null;
     }
 
-
     @Override
     @SuppressWarnings("unchecked")
     public T1 getFirst(int index) {
         rangeCheck(index);
-
         return (T1) firsts[index];
     }
 
@@ -109,13 +124,84 @@ public class Object2ObjectList<T1, T2> implements PairList<T1, T2> {
     @SuppressWarnings("unchecked")
     public T2 getSecond(int index) {
         rangeCheck(index);
-
         return (T2) seconds[index];
     }
 
     private void rangeCheck(int index) {
         if (index >= size) {
             throw new IndexOutOfBoundsException(String.format("Index: %d, size: %d", index, size));
+        }
+    }
+
+    @Override
+    public PairIterator<T1, T2> iterator() {
+        return new Iterator();
+    }
+
+    @Override
+    public void clear() {
+        modCount++;
+        // clear to let GC do its work
+        for (int i = 0; i < size; i++) {
+            firsts[i] = null;
+            seconds[i] = null;
+        }
+        size = 0;
+    }
+
+    private class Iterator implements PairIterator<T1, T2> {
+        int cursor;       // index of next element to return
+        int lastRet = -1; // index of last element returned; -1 if no such
+        long expectedModCount = modCount;
+        boolean nextFirstWasCalled = false;
+
+        @Override
+        public boolean hasNext() {
+            return cursor != size;
+        }
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public T1 nextFirst() {
+            nextFirstWasCalled = true;
+            checkForComodification();
+            Object[] elementData = Object2ObjectList.this.firsts;
+            int i = cursor;
+            if (i >= size) {
+                throw new NoSuchElementException();
+            }
+            if (i >= elementData.length) {
+                throw new ConcurrentModificationException();
+            }
+            return (T1) elementData[lastRet = i];
+        }
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public T2 nextSecond() {
+            checkFirstWasCalled();
+            checkForComodification();
+            Object[] elementData = Object2ObjectList.this.seconds;
+            if (cursor >= size) {
+                throw new NoSuchElementException();
+            }
+            if (cursor >= elementData.length) {
+                throw new ConcurrentModificationException();
+            }
+            cursor++;
+            return (T2) elementData[lastRet];
+        }
+
+        private void checkFirstWasCalled() {
+            if (!nextFirstWasCalled) {
+                throw new IllegalArgumentException("Wrong order! PairIterator#nextFirst() should be called first.");
+            }
+            nextFirstWasCalled = false;
+        }
+
+        final void checkForComodification() {
+            if (modCount != expectedModCount)
+                throw new ConcurrentModificationException();
         }
     }
 }
